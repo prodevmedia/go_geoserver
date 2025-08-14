@@ -12,6 +12,7 @@ RUN go mod download
 
 # Copy source code
 COPY . .
+# 
 
 # Build statik binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o geojson-server main.go
