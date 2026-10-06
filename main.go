@@ -34,14 +34,26 @@ func main() {
 	if dsn == "" {
 		log.Fatalf("%s tidak di-set. contoh: postgres://user:pass@host:5432/db?sslmode=disable", connStringEnv)
 	}
+
+	// Jika menggunakan Transaction pooler Supabase (port 6543), aktifkan simple_protocol
+	// agar tidak terjadi konflik prepared statements dengan PgBouncer/Supavisor
+	if strings.Contains(dsn, ":6543") && !strings.Contains(dsn, "default_query_exec_mode") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn = dsn + sep + "default_query_exec_mode=simple_protocol"
+	}
+
 	var err error
 	db, err = sql.Open("pgx", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
 	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxIdleTime(1 * time.Minute)
+	db.SetConnMaxLifetime(10 * time.Minute)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
@@ -473,15 +485,23 @@ func handleSHP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	errChan := make(chan error, 1)
 	go func() {
 		defer stdin.Close()
-		if err := streamGeoJSON(r.Context(), stdin, table, geomCol, where, bbox, limit, srid); err != nil {
-			log.Println("stream to ogr2ogr error:", err)
-		}
+		errChan <- streamGeoJSON(r.Context(), stdin, table, geomCol, where, bbox, limit, srid)
 	}()
 
-	if err := cmd.Wait(); err != nil {
-		log.Printf("ogr2ogr error: %v, stderr: %s", err, stderr.String())
+	cmdErr := cmd.Wait()
+	streamErr := <-errChan
+
+	if streamErr != nil {
+		log.Printf("stream error: %v", streamErr)
+		http.Error(w, "database query error: "+streamErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if cmdErr != nil {
+		log.Printf("ogr2ogr error: %v, stderr: %s", cmdErr, stderr.String())
 		http.Error(w, "ogr2ogr error: "+stderr.String(), http.StatusInternalServerError)
 		return
 	}
@@ -551,15 +571,23 @@ func handleKML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	errChan := make(chan error, 1)
 	go func() {
 		defer stdin.Close()
-		if err := streamGeoJSON(r.Context(), stdin, table, geomCol, where, bbox, limit, srid); err != nil {
-			log.Println("stream to ogr2ogr error:", err)
-		}
+		errChan <- streamGeoJSON(r.Context(), stdin, table, geomCol, where, bbox, limit, srid)
 	}()
 
-	if err := cmd.Wait(); err != nil {
-		log.Printf("ogr2ogr error: %v, stderr: %s", err, stderr.String())
+	cmdErr := cmd.Wait()
+	streamErr := <-errChan
+
+	if streamErr != nil {
+		log.Printf("stream error: %v", streamErr)
+		http.Error(w, "database query error: "+streamErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if cmdErr != nil {
+		log.Printf("ogr2ogr error: %v, stderr: %s", cmdErr, stderr.String())
 		http.Error(w, "ogr2ogr error: "+stderr.String(), http.StatusInternalServerError)
 		return
 	}
@@ -623,15 +651,23 @@ func handleGPKG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	errChan := make(chan error, 1)
 	go func() {
 		defer stdin.Close()
-		if err := streamGeoJSON(r.Context(), stdin, table, geomCol, where, bbox, limit, srid); err != nil {
-			log.Println("stream to ogr2ogr error:", err)
-		}
+		errChan <- streamGeoJSON(r.Context(), stdin, table, geomCol, where, bbox, limit, srid)
 	}()
 
-	if err := cmd.Wait(); err != nil {
-		log.Printf("ogr2ogr error: %v, stderr: %s", err, stderr.String())
+	cmdErr := cmd.Wait()
+	streamErr := <-errChan
+
+	if streamErr != nil {
+		log.Printf("stream error: %v", streamErr)
+		http.Error(w, "database query error: "+streamErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if cmdErr != nil {
+		log.Printf("ogr2ogr error: %v, stderr: %s", cmdErr, stderr.String())
 		http.Error(w, "ogr2ogr error: "+stderr.String(), http.StatusInternalServerError)
 		return
 	}
